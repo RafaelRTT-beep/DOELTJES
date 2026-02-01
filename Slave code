@@ -1,0 +1,74 @@
+#include <esp_now.h>
+#include <WiFi.h>
+#include <Preferences.h>
+#include <FastLED.h>
+
+// Pins
+#define PIEZO_PIN 34
+#define LED_PIN 5
+#define NUM_LEDS 10
+
+CRGB leds[NUM_LEDS];
+Preferences prefs;
+int threshold;
+unsigned long lastHitTime = 0;
+const int debounceTime = 250;
+
+// MASTER MAC ADRES (Vervang dit door het adres van jouw Master ESP32)
+uint8_t masterAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+// UNIVERSELE CALLBACK VOOR ONTVANGST
+#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+void onDataRecv(const esp_now_recv_info *info, const uint8_t *incomingData, int len) {
+#else
+void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
+#endif
+    if (len == sizeof(int)) {
+        memcpy(&threshold, incomingData, sizeof(int));
+        prefs.putInt("threshold", threshold);
+        Serial.printf("Nieuwe gevoeligheid: %d\n", threshold);
+    }
+}
+
+void setup() {
+    Serial.begin(115200);
+    WiFi.mode(WIFI_STA);
+    
+    prefs.begin("target", false);
+    threshold = prefs.getInt("threshold", 500);
+
+    FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
+    pinMode(PIEZO_PIN, INPUT);
+
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("ESP-NOW Init Failed");
+        return;
+    }
+
+    esp_now_register_recv_cb(onDataRecv);
+
+    // Registreer de master als peer
+    esp_now_peer_info_t peerInfo = {};
+    memcpy(peerInfo.peer_addr, masterAddress, 6);
+    peerInfo.channel = 0;  
+    peerInfo.encrypt = false;
+    esp_now_add_peer(&peerInfo);
+}
+
+void loop() {
+    int val = analogRead(PIEZO_PIN);
+    if (val > threshold && (millis() - lastHitTime > debounceTime)) {
+        uint8_t hitTrigger = 1;
+        esp_now_send(masterAddress, &hitTrigger, sizeof(hitTrigger));
+        
+        // Directe visuele feedback
+        fill_solid(leds, NUM_LEDS, CRGB::Red);
+        FastLED.show();
+        delay(100);
+        fill_solid(leds, NUM_LEDS, CRGB::Black);
+        FastLED.show();
+        
+        lastHitTime = millis();
+        Serial.println("TARGET HIT!");
+    }
+}
