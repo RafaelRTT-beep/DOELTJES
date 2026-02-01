@@ -4,80 +4,143 @@
 #include <esp_now.h>
 #include <ArduinoJson.h>
 
-// --- CONFIGURATIE ---
-const char* ssid = "RTT TARGET PRO";
-const char* password = "waalhaven187"; 
+const char* ssid = "RTT RAF_TARGET_PRO";
+const char* password = "123456"; 
 
 AsyncWebServer server(80);
 WebSocketsServer webSocket = WebSocketsServer(81);
 
-int totalScore = 0;
-bool gameActive = false;
-unsigned long startTime = 0;
+enum GameMode { MANUAL, SEQUENCE, RANDOM, SHOOT_NO_SHOOT };
+GameMode currentMode = MANUAL;
 
+int totalScore = 0;
+int targetToHit = 1;
+bool gameActive = false;
+bool gamePaused = false;
+unsigned long startTime = 0;
+unsigned long pausedTime = 0;
+
+// Structuur voor communicatie met Slaves
 typedef struct struct_message {
     int targetID;
-    float impactForce;
+    int command; // 0 = UIT, 1 = ACTIEF (GROEN), 2 = FOUT (ROOD)
 } struct_message;
-struct_message incomingHit;
+struct_message txData; // Richting Slave
+struct_message rxData; // Van Slave
 
-// De HTML interface (vereenvoudigd voor deze herstel-stap)
+// --- WEB INTERFACE ---
 const char index_html[] PROGMEM = R"rawliteral(
-<!DOCTYPE html><html><head><title>TTS HUD</title>
-<style>body{background:#000;color:red;font-family:sans-serif;text-align:center;}
-#score{font-size:100px;}</style></head>
-<body><h1>TARGET MASTER</h1><div id="score">00</div>
-<button onclick="ws.send('START')">START</button>
-<script>var ws=new WebSocket('ws://'+window.location.hostname+':81/');
-ws.onmessage=function(e){var d=JSON.parse(e.data);if(d.type==='HIT')
-document.getElementById('score').innerText=d.total;};</script>
-</body></html>)rawliteral";
+<!DOCTYPE html><html><head><meta charset="UTF-8"><title>RTT HUB</title>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;900&display=swap');
+    body { background: #050505; color: #fff; font-family: 'Orbitron', sans-serif; margin: 0; display: grid; grid-template-columns: 250px 1fr 300px; height: 100vh; }
+    .menu { background: #111; border-right: 2px solid #f00; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+    .btn { background: #222; border: 1px solid #444; color: #aaa; padding: 15px; cursor: pointer; font-family: 'Orbitron'; }
+    .btn.active { border-color: #f00; color: #f00; }
+    .controls { margin-top: 20px; display: flex; gap: 5px; }
+    #mainBtn { flex: 2; background: #900; color: #fff; border: none; font-weight: bold; }
+    .hud { display: flex; flex-direction: column; justify-content: center; align-items: center; }
+    #score { font-size: 12vw; color: #f00; text-shadow: 0 0 20px #f00; }
+    #timer { font-size: 5vw; color: #888; }
+</style></head>
+<body>
+    <div class="menu">
+        <h3 style="color:#f00; font-size:0.7em;">MODES</h3>
+        <button class="btn active" id="m0" onclick="setMode(0)">FREE_FIRE</button>
+        <button class="btn" id="m1" onclick="setMode(1)">SEQUENCE</button>
+        <button class="btn" id="m2" onclick="setMode(2)">RANDOM</button>
+        <div class="controls">
+            <button id="mainBtn" class="btn" onclick="toggleGame()">START</button>
+            <button class="btn" onclick="resetGame()">RESET</button>
+        </div>
+    </div>
+    <div class="hud">
+        <div id="score">00</div>
+        <div id="timer">00.00s</div>
+    </div>
+<script>
+    var ws = new WebSocket('ws://' + window.location.hostname + ':81/');
+    var t; var time = 0;
+    var running = false;
 
-// Callback als er een hit binnenkomt
+    ws.onmessage = function(e) {
+        var d = JSON.parse(e.data);
+        if(d.type === "HIT") document.getElementById('score').innerText = d.total.toString().padStart(2, '0');
+        if(d.type === "STATUS") {
+            if(d.val === "PAUSED") { clearInterval(t); running = false; document.getElementById('mainBtn').innerText = "RESUME"; }
+        }
+    };
+
+    function toggleGame() {
+        if(!running) {
+            ws.send("START");
+            t = setInterval(() => { time += 0.01; document.getElementById('timer').innerText = time.toFixed(2) + "s"; }, 10);
+            document.getElementById('mainBtn').innerText = "PAUSE";
+            document.getElementById('mainBtn').style.background = "#660";
+            running = true;
+        } else {
+            ws.send("PAUSE");
+            clearInterval(t);
+            document.getElementById('mainBtn').innerText = "RESUME";
+            document.getElementById('mainBtn').style.background = "#900";
+            running = false;
+        }
+    }
+    function setMode(m) { ws.send("MODE:"+m); }
+    function resetGame() { ws.send("RESET"); location.reload(); }
+</script></body></html>)rawliteral";
+
+// --- ESP-NOW SEND (Naar Slaves) ---
+void sendCommandToSlave(int id, int cmd) {
+    txData.targetID = id;
+    txData.command = cmd;
+    // Hier moet het MAC adres van de slave(s) komen of broadcast
+    esp_now_send(NULL, (uint8_t *) &txData, sizeof(txData)); 
+}
+
 #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
 void onDataRecv(const esp_now_recv_info *info, const uint8_t *incomingData, int len) {
 #else
 void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
 #endif
-    memcpy(&incomingHit, incomingData, sizeof(incomingHit));
-    if (gameActive) {
-        totalScore++;
-        String json = "{\"type\":\"HIT\",\"total\":" + String(totalScore) + "}";
-        webSocket.broadcastTXT(json);
+    memcpy(&rxData, incomingData, sizeof(rxData));
+    if (gameActive && !gamePaused) {
+        if (currentMode == MANUAL || rxData.targetID == targetToHit) {
+            totalScore++;
+            if(currentMode == SEQUENCE) targetToHit++;
+            if(currentMode == RANDOM) targetToHit = random(1,4);
+            
+            String json = "{\"type\":\"HIT\",\"total\":" + String(totalScore) + "}";
+            webSocket.broadcastTXT(json);
+            
+            // Stuur commando naar volgende target
+            sendCommandToSlave(targetToHit, 1);
+        }
     }
 }
 
 void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
     if (type == WStype_TEXT) {
-        if (strcmp((char*)payload, "START") == 0) { gameActive = true; totalScore = 0; }
+        String msg = (char*)payload;
+        if (msg == "START") { gameActive = true; gamePaused = false; }
+        else if (msg == "PAUSE") { gamePaused = true; webSocket.broadcastTXT("{\"type\":\"STATUS\",\"val\":\"PAUSED\"}"); }
+        else if (msg.startsWith("MODE:")) currentMode = (GameMode)msg.substring(5).toInt();
     }
 }
 
 void setup() {
     Serial.begin(115200);
-    
-    // Dwing WiFi aan om een echt MAC adres te genereren
-    WiFi.mode(WIFI_AP_STA); 
-    delay(100);
-    
-    Serial.println("");
-    Serial.print("JE MAC ADRES IS: ");
-    Serial.println(WiFi.macAddress()); // DIT ADRES MOET IN JE SLAVE CODE
-
+    WiFi.mode(WIFI_AP_STA);
     WiFi.softAP(ssid, password);
-    
-    if (esp_now_init() != ESP_OK) return;
+    esp_now_init();
     esp_now_register_recv_cb(onDataRecv);
     
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send(200, "text/html", index_html);
-    });
-
+    // Voeg Slaves toe als peers voor feedback (Groen/Rood licht)
+    // esp_now_add_peer... (Broadcast adres gebruiken voor gemak)
+    
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){ request->send(200, "text/html", index_html); });
     server.begin();
     webSocket.begin();
     webSocket.onEvent(onWebSocketEvent);
 }
-
-void loop() {
-    webSocket.loop();
-}
+void loop() { webSocket.loop(); }
