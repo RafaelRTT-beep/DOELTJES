@@ -4,92 +4,88 @@
 #include <esp_now.h>
 #include <ArduinoJson.h>
 
-// --- CONFIGURATIE ---
 const char* ssid = "STEALTH_TARGET_PRO";
-const char* password = "AlphaOne_Combat";
+const char* password = "rtt";
 
-// --- GLOBALE VARIABELEN ---
 AsyncWebServer server(80);
 WebSocketsServer webSocket = WebSocketsServer(81);
 
 int totalScore = 0;
-unsigned long startTime = 0;
 bool gameActive = false;
-String currentMode = "IDLE";
+unsigned long startTime = 0;
 
-// Structuur voor inkomende hit-data van de Slaves
 typedef struct struct_message {
     int targetID;
     float impactForce;
 } struct_message;
-
 struct_message incomingHit;
 
-// --- WEB INTERFACE (HTML) ---
-// We gebruiken de tactische HTML die we eerder hebben besproken
+// --- TACTISCHE HUD INTERFACE ---
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html lang="nl">
+<html>
 <head>
     <meta charset="UTF-8">
-    <title>TTS | COMMAND CENTER</title>
+    <title>TTS HUD</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;900&display=swap');
-        body { background: #050505; color: #e0e0e0; font-family: 'Orbitron', sans-serif; margin: 0; overflow: hidden; display: flex; flex-direction: column; height: 100vh; border: 4px solid #1a0000; box-sizing: border-box; }
-        header { padding: 15px 30px; background: linear-gradient(90deg, #330000 0%, transparent 100%); border-bottom: 2px solid #ff0000; display: flex; justify-content: space-between; align-items: center; }
+        body { background: #050505; color: #fff; font-family: 'Orbitron', sans-serif; margin: 0; overflow: hidden; height: 100vh; display: flex; flex-direction: column; border: 4px solid #1a0000; box-sizing: border-box; }
+        header { padding: 15px; background: linear-gradient(90deg, #300 0%, transparent 100%); border-bottom: 2px solid #f00; display: flex; justify-content: space-between; align-items: center; }
         main { display: grid; grid-template-columns: 2fr 1fr; flex-grow: 1; padding: 20px; gap: 20px; }
-        .main-display { display: flex; flex-direction: column; justify-content: center; align-items: center; border-right: 1px solid #330000; }
-        #score-display { font-size: 18vw; font-weight: 900; color: #ff0000; text-shadow: 0 0 40px rgba(255, 0, 0, 0.6); line-height: 1; }
-        .timer-large { font-size: 5vw; margin-top: -10px; color: #888; }
-        .control-group { background: rgba(20, 20, 20, 0.9); border-left: 5px solid #ff0000; padding: 20px; margin-bottom: 15px; }
-        button { background: transparent; border: 1px solid #444; color: white; padding: 12px; font-family: 'Orbitron', sans-serif; cursor: pointer; transition: 0.2s; text-transform: uppercase; width: 100%; margin-bottom: 5px;}
-        button:hover { background: #ff0000; color: black; }
-        input[type=range] { width: 100%; accent-color: #ff0000; }
-        #log-container { flex-grow: 1; background: rgba(0,0,0,0.5); border: 1px solid #222; padding: 10px; font-size: 0.8em; overflow-y: hidden; color: #00ff00; font-family: 'Courier New', monospace; }
-        .hit-flash { animation: flash 0.15s ease-out; }
-        @keyframes flash { 0% { background-color: #440000; } 100% { background-color: #050505; } }
+        .display-unit { display: flex; flex-direction: column; justify-content: center; align-items: center; border-right: 1px solid #300; }
+        #score { font-size: 15vw; font-weight: 900; color: #f00; text-shadow: 0 0 30px #f00; margin: 0; }
+        .timer-unit { font-size: 4vw; color: #888; }
+        .side-panel { display: flex; flex-direction: column; gap: 15px; }
+        .control-box { background: rgba(20,20,20,0.9); border-left: 5px solid #f00; padding: 15px; }
+        button { background: transparent; border: 1px solid #444; color: #fff; padding: 12px; font-family: 'Orbitron'; cursor: pointer; text-transform: uppercase; width: 100%; margin-bottom: 5px; }
+        button:hover { background: #f00; color: #000; }
+        #log { flex-grow: 1; background: #000; border: 1px solid #222; padding: 10px; font-family: monospace; color: #0f0; font-size: 0.7em; overflow: hidden; }
+        .flash { animation: f 0.1s ease-out; }
+        @keyframes f { 0% { background: #400; } 100% { background: #050505; } }
     </style>
 </head>
-<body id="body">
-<header><div>TTS // PHASE_ONE // COMMAND_CENTER</div><div id="status">WS: CONNECTED</div></header>
+<body id="b">
+<header><div>TTS // COMMANDER</div><div id="stat">STATUS: READY</div></header>
 <main>
-    <div class="main-display">
-        <div id="score-display">00</div>
-        <div class="timer-large">T-MINUS: <span id="timer">00.0</span>s</div>
+    <div class="display-unit">
+        <div id="score">00</div>
+        <div class="timer-unit">CLOCK: <span id="timer">00.0</span>s</div>
     </div>
     <div class="side-panel">
-        <div class="control-group">
-            <button onclick="send('START')">START MISSION</button>
-            <button onclick="send('RESET')">RELOAD / RESET</button>
+        <div class="control-box">
+            <button onclick="send('START')">ENGAGE MISSION</button>
+            <button onclick="send('RESET')">RELOAD SYSTEM</button>
         </div>
-        <div class="control-group">
-            <label>THRESHOLD: <span id="sVal">500</span></label>
-            <input type="range" min="100" max="3000" value="500" id="sSlider" oninput="sendSens(this.value)">
+        <div class="control-box">
+            <h3>SENSITIVITY: <span id="sVal">500</span></h3>
+            <input type="range" min="100" max="3000" value="500" style="width:100%; accent-color:#f00;" oninput="sendSens(this.value)">
         </div>
-        <div id="log-container">> SYSTEM ONLINE</div>
+        <div id="log">> STANDBY...</div>
     </div>
 </main>
 <script>
-    let ws = new WebSocket('ws://' + window.location.hostname + ':81/');
-    ws.onmessage = (e) => {
-        let d = JSON.parse(e.data);
+    var ws = new WebSocket('ws://' + window.location.hostname + ':81/');
+    var timerInt; var time = 0;
+    ws.onmessage = function(e) {
+        var d = JSON.parse(e.data);
         if(d.type === "HIT") {
-            document.getElementById('score-display').innerText = d.total.toString().padStart(2, '0');
-            document.getElementById('timer').innerText = d.time.toFixed(1);
-            document.getElementById('body').classList.add('hit-flash');
-            setTimeout(() => document.getElementById('body').classList.remove('hit-flash'), 100);
-            let log = document.getElementById('log-container');
-            log.innerHTML = "> TARGET " + d.id + " NEUTRALIZED [" + d.time + "s]<br>" + log.innerHTML;
+            document.getElementById('score').innerText = d.total.toString().padStart(2, '0');
+            document.getElementById('b').classList.add('flash');
+            setTimeout(()=>document.getElementById('b').classList.remove('flash'), 100);
+            document.getElementById('log').innerHTML = "> TARGET " + d.id + " HIT [" + d.time + "s]<br>" + document.getElementById('log').innerHTML;
         }
     };
-    function send(m) { ws.send(m); }
-    function sendSens(v) { document.getElementById('sVal').innerText = v; ws.send("SENS:" + v); }
+    function send(m) { 
+        ws.send(m);
+        if(m==='START'){ time=0; clearInterval(timerInt); timerInt=setInterval(()=>{time+=0.1; document.getElementById('timer').innerText=time.toFixed(1);},100); }
+        else { clearInterval(timerInt); document.getElementById('timer').innerText="0.0"; }
+    }
+    function sendSens(v) { document.getElementById('sVal').innerText=v; ws.send("SENS:"+v); }
 </script>
 </body>
 </html>
 )rawliteral";
 
-// --- ESP-NOW CALLBACK (Hit Ontvangst) ---
 #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
 void onDataRecv(const esp_now_recv_info *info, const uint8_t *incomingData, int len) {
 #else
@@ -97,77 +93,38 @@ void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
 #endif
     if (len == sizeof(struct_message)) {
         memcpy(&incomingHit, incomingData, sizeof(incomingHit));
-        
         if (gameActive) {
             totalScore++;
-            float reactionTime = (millis() - startTime) / 1000.0;
-            
-            // Verzend naar Web Interface
-            StaticJsonDocument<200> doc;
-            doc["type"] = "HIT";
-            doc["id"] = incomingHit.targetID;
-            doc["total"] = totalScore;
-            doc["time"] = reactionTime;
-            
-            String output;
-            serializeJson(doc, output);
-            webSocket.broadcastTXT(output);
+            float react = (millis() - startTime) / 1000.0;
+            String json = "{\"type\":\"HIT\",\"total\":" + String(totalScore) + ",\"id\":" + String(incomingHit.targetID) + ",\"time\":" + String(react) + "}";
+            webSocket.broadcastTXT(json);
         }
     }
 }
 
-// --- WEBSOCKET EVENT HANDLER ---
 void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
     if (type == WStype_TEXT) {
         String msg = (char*)payload;
-        if (msg == "START") {
-            gameActive = true;
-            startTime = millis();
-            totalScore = 0;
-            Serial.println("Mission Started");
-        } 
-        else if (msg == "RESET") {
-            gameActive = false;
-            totalScore = 0;
-            Serial.println("System Reset");
-        }
+        if (msg == "START") { gameActive = true; startTime = millis(); totalScore = 0; }
+        else if (msg == "RESET") { gameActive = false; totalScore = 0; }
         else if (msg.startsWith("SENS:")) {
-            int sens = msg.substring(5).toInt();
-            // Broadcast gevoeligheid naar alle Slaves via ESP-NOW
-            uint8_t broadcastAddr[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-            esp_now_send(broadcastAddr, (uint8_t *) &sens, sizeof(sens));
+            int s = msg.substring(5).toInt();
+            uint8_t bcast[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+            esp_now_send(bcast, (uint8_t *) &s, sizeof(s));
         }
     }
 }
 
-// --- SETUP ---
 void setup() {
     Serial.begin(115200);
-
-    // WiFi instellen als Access Point
     WiFi.softAP(ssid, password);
-    Serial.print("IP-Adres: "); Serial.println(WiFi.softAPIP());
-
-    // ESP-NOW Initialisatie
-    if (esp_now_init() != ESP_OK) {
-        Serial.println("ESP-NOW Error");
-        return;
-    }
+    if (esp_now_init() != ESP_OK) return;
     esp_now_register_recv_cb(onDataRecv);
-
-    // Webserver route
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send(200, "text/html", index_html);
-    });
-
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){ request->send(200, "text/html", index_html); });
     server.begin();
     webSocket.begin();
     webSocket.onEvent(onWebSocketEvent);
-
-    Serial.println("Master Controller Ready");
+    Serial.print("Master MAC: "); Serial.println(WiFi.macAddress());
 }
 
-// --- LOOP ---
-void loop() {
-    webSocket.loop();
-}
+void loop() { webSocket.loop(); }
