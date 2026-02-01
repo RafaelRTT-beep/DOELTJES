@@ -2,79 +2,67 @@
 #include <WiFi.h>
 #include <FastLED.h>
 
-// Hardware Pins
-#define PIEZO_PIN 34
+#define TARGET_ID 1        // Uniek per doel
+#define PIEZO_PIN 34       
 #define LED_PIN 5
-#define SPEAKER_PIN 13 
+#define SPEAKER_PIN 13
 #define NUM_LEDS 12
 
 CRGB leds[NUM_LEDS];
-int threshold = 500;
+int threshold = 500;       
 unsigned long lastHit = 0;
 
-// Vul hier je eigen Master MAC in
+// VUL HIER HET MAC ADRES VAN JE MASTER IN
 uint8_t masterAddr[] = {0x28, 0x05, 0xA5, 0x07, 0x41, 0xFC};
 
-// Ontvang commando's van Master (zoals kleur of gevoeligheid)
-#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
-void onDataRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
-#else
-void onDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
-#endif
-    if (len == sizeof(int)) {
-        memcpy(&threshold, data, sizeof(int));
-    } else {
-        // Logica voor kleuren (bijv. Shoot/No-Shoot)
-        char command[len + 1];
-        memcpy(command, data, len);
-        command[len] = '\0';
-        String cmd = String(command);
+typedef struct struct_message {
+    int targetID;
+    float impactForce;
+} struct_message;
+struct_message myData;
 
-        if (cmd == "COLOR:RED") fill_solid(leds, NUM_LEDS, CRGB::Red);
-        if (cmd == "COLOR:GREEN") fill_solid(leds, NUM_LEDS, CRGB::Green);
-        if (cmd == "COLOR:OFF") fill_solid(leds, NUM_LEDS, CRGB::Black);
-        FastLED.show();
-    }
+#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+void onDataRecv(const esp_now_recv_info *info, const uint8_t *incomingData, int len) {
+#else
+void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
+#endif
+    if (len == sizeof(int)) memcpy(&threshold, incomingData, sizeof(int));
 }
 
 void setup() {
     Serial.begin(115200);
     WiFi.mode(WIFI_STA);
-    
+    analogSetAttenuation(ADC_11db); 
     pinMode(PIEZO_PIN, INPUT);
     pinMode(SPEAKER_PIN, OUTPUT);
-    
+
     FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
-    FastLED.setBrightness(150);
+    FastLED.setBrightness(200);
+    fill_solid(leds, NUM_LEDS, CRGB::Black);
+    FastLED.show();
 
     if (esp_now_init() != ESP_OK) return;
-    esp_now_register_recv_cb(onDataRecv);
-
     esp_now_peer_info_t peerInfo = {};
     memcpy(peerInfo.peer_addr, masterAddr, 6);
+    peerInfo.channel = 0; peerInfo.encrypt = false;
     esp_now_add_peer(&peerInfo);
+    esp_now_register_recv_cb(onDataRecv);
 }
 
 void loop() {
     int val = analogRead(PIEZO_PIN);
-    
     if (val > threshold && (millis() - lastHit > 250)) {
-        // Meld hit aan Master
-        uint8_t hit = 1;
-        esp_now_send(masterAddr, &hit, sizeof(hit));
-        
-        // Directe lokale feedback (Geluid + Licht)
+        lastHit = millis();
+        myData.targetID = TARGET_ID;
+        myData.impactForce = (float)val;
+        esp_now_send(masterAddr, (uint8_t *) &myData, sizeof(myData));
+
         digitalWrite(SPEAKER_PIN, HIGH);
         fill_solid(leds, NUM_LEDS, CRGB::White);
         FastLED.show();
-        
-        delay(50); // Korte felle flits en piep
-        
+        delay(60); 
         digitalWrite(SPEAKER_PIN, LOW);
         fill_solid(leds, NUM_LEDS, CRGB::Black);
         FastLED.show();
-        
-        lastHit = millis();
-        Serial.println("HIT!");
     }
 }
