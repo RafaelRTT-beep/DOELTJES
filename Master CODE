@@ -4,15 +4,18 @@
 #include <esp_now.h>
 #include <ArduinoJson.h>
 
-const char* ssid = "RTT TARGET PRO";
-const char* password = "waalhaven187";
+// --- NETWERK ---
+const char* ssid = "RTT TARGETS PRO";
+const char* password = "waalhaven187"; 
 
 AsyncWebServer server(80);
 WebSocketsServer webSocket = WebSocketsServer(81);
 
+// --- GAME DATA ---
 int totalScore = 0;
 bool gameActive = false;
 unsigned long startTime = 0;
+float lastSplit = 0;
 
 typedef struct struct_message {
     int targetID;
@@ -20,72 +23,142 @@ typedef struct struct_message {
 } struct_message;
 struct_message incomingHit;
 
-// --- TACTISCHE HUD INTERFACE ---
+// --- PROFESSIONELE TACTISCHE INTERFACE ---
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html>
+<html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <title>TTS HUD</title>
+    <title>TTS // ULTIMATE COMMAND</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;900&display=swap');
-        body { background: #050505; color: #fff; font-family: 'Orbitron', sans-serif; margin: 0; overflow: hidden; height: 100vh; display: flex; flex-direction: column; border: 4px solid #1a0000; box-sizing: border-box; }
-        header { padding: 15px; background: linear-gradient(90deg, #300 0%, transparent 100%); border-bottom: 2px solid #f00; display: flex; justify-content: space-between; align-items: center; }
-        main { display: grid; grid-template-columns: 2fr 1fr; flex-grow: 1; padding: 20px; gap: 20px; }
-        .display-unit { display: flex; flex-direction: column; justify-content: center; align-items: center; border-right: 1px solid #300; }
-        #score { font-size: 15vw; font-weight: 900; color: #f00; text-shadow: 0 0 30px #f00; margin: 0; }
-        .timer-unit { font-size: 4vw; color: #888; }
-        .side-panel { display: flex; flex-direction: column; gap: 15px; }
-        .control-box { background: rgba(20,20,20,0.9); border-left: 5px solid #f00; padding: 15px; }
-        button { background: transparent; border: 1px solid #444; color: #fff; padding: 12px; font-family: 'Orbitron'; cursor: pointer; text-transform: uppercase; width: 100%; margin-bottom: 5px; }
-        button:hover { background: #f00; color: #000; }
-        #log { flex-grow: 1; background: #000; border: 1px solid #222; padding: 10px; font-family: monospace; color: #0f0; font-size: 0.7em; overflow: hidden; }
-        .flash { animation: f 0.1s ease-out; }
-        @keyframes f { 0% { background: #400; } 100% { background: #050505; } }
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+        :root { --red: #ff0000; --dim-red: #440000; --bg: #050505; }
+        body { background: var(--bg); color: #fff; font-family: 'Orbitron', sans-serif; margin: 0; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+        
+        /* Tactical Overlay */
+        header { padding: 20px 40px; background: linear-gradient(90deg, var(--dim-red) 0%, transparent 100%); border-bottom: 2px solid var(--red); display: flex; justify-content: space-between; align-items: center; box-shadow: 0 0 20px rgba(255,0,0,0.2); }
+        .status-tag { color: var(--red); font-size: 0.8em; letter-spacing: 3px; animation: blink 1.5s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+
+        main { display: grid; grid-template-columns: 3fr 1fr; flex-grow: 1; padding: 20px; gap: 20px; }
+        
+        /* Score Display */
+        .center-hud { display: flex; flex-direction: column; justify-content: center; align-items: center; border: 1px solid #1a1a1a; position: relative; background: radial-gradient(circle, #110000 0%, transparent 70%); }
+        .score-val { font-size: 18vw; font-weight: 900; color: var(--red); text-shadow: 0 0 50px var(--red); line-height: 0.8; }
+        .timer-val { font-size: 5vw; color: #aaa; margin-top: 20px; }
+        .split-val { font-size: 1.5vw; color: #666; text-transform: uppercase; margin-top: 10px; }
+
+        /* Side Panel */
+        .side-panel { display: flex; flex-direction: column; gap: 15px; border-left: 1px solid var(--dim-red); padding-left: 20px; }
+        .module { background: rgba(20,20,20,0.9); border: 1px solid #333; padding: 20px; position: relative; }
+        .module::before { content: ''; position: absolute; top: 0; left: 0; width: 5px; height: 100%; background: var(--red); }
+        
+        h3 { margin: 0 0 15px 0; font-size: 0.7em; letter-spacing: 2px; color: var(--red); }
+        
+        button { background: transparent; border: 1px solid var(--red); color: #fff; padding: 15px; font-family: 'Orbitron'; cursor: pointer; text-transform: uppercase; width: 100%; transition: 0.3s; font-size: 0.8em; margin-bottom: 10px; }
+        button:hover { background: var(--red); color: #000; box-shadow: 0 0 20px var(--red); }
+        
+        .log-container { flex-grow: 1; overflow-y: hidden; font-family: monospace; font-size: 0.75em; color: #0f0; line-height: 1.6; }
+        .hit-entry { border-bottom: 1px solid #1a1a1a; padding: 5px 0; display: flex; justify-content: space-between; }
+
+        /* Impact Flash */
+        .flash-active { animation: screen-flash 0.15s ease-out; }
+        @keyframes screen-flash { 0% { background: var(--dim-red); } 100% { background: var(--bg); } }
+        
+        input[type=range] { width: 100%; accent-color: var(--red); cursor: pointer; }
     </style>
 </head>
 <body id="b">
-<header><div>TTS // COMMANDER</div><div id="stat">STATUS: READY</div></header>
+<header>
+    <div style="font-weight:900; font-size:1.2em;">TTS // ALPHA_UNIT // COMMAND_HUD</div>
+    <div class="status-tag" id="status-text">SYSTEM_READY</div>
+</header>
+
 <main>
-    <div class="display-unit">
-        <div id="score">00</div>
-        <div class="timer-unit">CLOCK: <span id="timer">00.0</span>s</div>
+    <div class="center-hud">
+        <div style="font-size: 1em; color: #444; margin-bottom: 20px;">CONFIRMED NEUTRALIZATIONS</div>
+        <div class="score-val" id="score">00</div>
+        <div class="timer-val" id="timer">00.00</div>
+        <div class="split-val">LAST SPLIT: <span id="split">0.00</span>s</div>
     </div>
+
     <div class="side-panel">
-        <div class="control-box">
+        <div class="module">
+            <h3>COMMANDS</h3>
             <button onclick="send('START')">ENGAGE MISSION</button>
-            <button onclick="send('RESET')">RELOAD SYSTEM</button>
+            <button onclick="send('RESET')">ABORT & RELOAD</button>
         </div>
-        <div class="control-box">
-            <h3>SENSITIVITY: <span id="sVal">500</span></h3>
-            <input type="range" min="100" max="3000" value="500" style="width:100%; accent-color:#f00;" oninput="sendSens(this.value)">
+
+        <div class="module">
+            <h3>SENSOR THRESHOLD: <span id="sVal">500</span></h3>
+            <input type="range" min="100" max="3000" value="500" oninput="updateSens(this.value)">
         </div>
-        <div id="log">> STANDBY...</div>
+
+        <div class="module" style="flex-grow: 1; display: flex; flex-direction: column;">
+            <h3>COMBAT LOG</h3>
+            <div id="log" class="log-container">
+                > WAITING FOR ENGAGEMENT...
+            </div>
+        </div>
     </div>
 </main>
+
 <script>
     var ws = new WebSocket('ws://' + window.location.hostname + ':81/');
-    var timerInt; var time = 0;
+    var tInt; var time = 0; var lastHit = 0;
+
     ws.onmessage = function(e) {
         var d = JSON.parse(e.data);
         if(d.type === "HIT") {
+            // Update Score & Split
             document.getElementById('score').innerText = d.total.toString().padStart(2, '0');
-            document.getElementById('b').classList.add('flash');
-            setTimeout(()=>document.getElementById('b').classList.remove('flash'), 100);
-            document.getElementById('log').innerHTML = "> TARGET " + d.id + " HIT [" + d.time + "s]<br>" + document.getElementById('log').innerHTML;
+            let current = d.time;
+            let split = (current - lastHit).toFixed(2);
+            lastHit = current;
+            document.getElementById('split').innerText = split;
+            
+            // Visual Flash
+            document.getElementById('b').classList.add('flash-active');
+            setTimeout(() => document.getElementById('b').classList.remove('flash-active'), 150);
+            
+            // Log Entry
+            let log = document.getElementById('log');
+            log.innerHTML = `<div class="hit-entry"><span>TARGET ${d.id}</span><span>${d.time.toFixed(2)}s</span></div>` + log.innerHTML;
         }
     };
-    function send(m) { 
+
+    function send(m) {
         ws.send(m);
-        if(m==='START'){ time=0; clearInterval(timerInt); timerInt=setInterval(()=>{time+=0.1; document.getElementById('timer').innerText=time.toFixed(1);},100); }
-        else { clearInterval(timerInt); document.getElementById('timer').innerText="0.0"; }
+        if(m === 'START') {
+            time = 0; lastHit = 0;
+            clearInterval(tInt);
+            document.getElementById('status-text').innerText = "MISSION_ACTIVE";
+            document.getElementById('status-text').style.color = "#0f0";
+            tInt = setInterval(() => {
+                time += 0.01;
+                document.getElementById('timer').innerText = time.toFixed(2);
+            }, 10);
+            document.getElementById('log').innerHTML = "> ENGAGEMENT STARTED<br>";
+        } else {
+            clearInterval(tInt);
+            document.getElementById('status-text').innerText = "SYSTEM_READY";
+            document.getElementById('status-text').style.color = "#ff0000";
+            document.getElementById('score').innerText = "00";
+            document.getElementById('timer').innerText = "00.00";
+            document.getElementById('split').innerText = "0.00";
+        }
     }
-    function sendSens(v) { document.getElementById('sVal').innerText=v; ws.send("SENS:"+v); }
+
+    function updateSens(v) {
+        document.getElementById('sVal').innerText = v;
+        ws.send("SENS:" + v);
+    }
 </script>
 </body>
 </html>
 )rawliteral";
 
+// --- ESP-NOW HANDLER ---
 #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
 void onDataRecv(const esp_now_recv_info *info, const uint8_t *incomingData, int len) {
 #else
@@ -102,6 +175,7 @@ void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
     }
 }
 
+// --- WEBSOCKET HANDLER ---
 void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
     if (type == WStype_TEXT) {
         String msg = (char*)payload;
@@ -117,6 +191,7 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
 
 void setup() {
     Serial.begin(115200);
+    WiFi.softAPdisconnect(true); delay(100);
     WiFi.softAP(ssid, password);
     if (esp_now_init() != ESP_OK) return;
     esp_now_register_recv_cb(onDataRecv);
@@ -124,7 +199,7 @@ void setup() {
     server.begin();
     webSocket.begin();
     webSocket.onEvent(onWebSocketEvent);
-    Serial.print("Master MAC: "); Serial.println(WiFi.macAddress());
+    Serial.println("MASTER ONLINE: http://192.168.4.1");
 }
 
 void loop() { webSocket.loop(); }
