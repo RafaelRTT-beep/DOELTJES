@@ -1,0 +1,5 @@
+const int PIEZO_PIN = 34;    
+const int LED_R = 25;        
+const int LED_G = 26;        
+const int LED_B = 27;        
+const int TARGET_ID = 1; 
