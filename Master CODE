@@ -31,8 +31,10 @@ struct_message rxData;
 // --- GEHEUGEN FUNCTIES ---
 void saveRecords() {
     File file = LittleFS.open("/records.bin", "w");
-    file.write((uint8_t*)top3, sizeof(top3));
-    file.close();
+    if(file) {
+        file.write((uint8_t*)top3, sizeof(top3));
+        file.close();
+    }
 }
 
 void loadRecords() {
@@ -46,35 +48,18 @@ void loadRecords() {
     }
 }
 
-// --- WEB INTERFACE HTML ---
+// --- WEB INTERFACE ---
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html><html><head><meta charset="UTF-8"><title>RTT HUB</title>
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;900&display=swap');
-    body { background: #050505; color: #fff; font-family: 'Orbitron', sans-serif; margin: 0; display: grid; grid-template-columns: 250px 1fr 300px; height: 100vh; }
-    .menu { background: #0a0a0a; border-right: 2px solid #f00; padding: 20px; }
-    .btn { width: 100%; background: #111; border: 1px solid #444; color: #aaa; padding: 15px; margin: 5px 0; cursor: pointer; font-family: 'Orbitron'; }
-    .btn.active { border-color: #f00; color: #f00; background: rgba(255,0,0,0.1); }
-    #mainBtn { background: #900; color: #fff; border: none; font-weight: 900; margin-top: 20px; }
-    .hud { display: flex; flex-direction: column; justify-content: center; align-items: center; }
-    #score { font-size: 12vw; color: #f00; text-shadow: 0 0 20px #f00; line-height:1; }
-    #timer { font-size: 5vw; color: #666; }
-    .side-r { background: #0a0a0a; border-left: 2px solid #333; padding: 20px; }
-    .rec { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #222; font-size: 0.9em; }
-</style></head>
-<body>
-    <div class="menu">
-        <h3 style="color:#f00; font-size:0.7em;">SYSTEM_MODES</h3>
-        <button class="btn active" id="m0" onclick="setMode(0)">FREE_FIRE</button>
-        <button class="btn" id="m1" onclick="setMode(1)">SEQUENCE</button>
-        <button class="btn" id="m2" onclick="setMode(2)">RANDOM</button>
-        <button id="mainBtn" class="btn" onclick="toggleGame()">START_MISSION</button>
-        <button class="btn" onclick="ws.send('RESET')" style="font-size:0.6em; margin-top:50px;">RESET_SYSTEM</button>
-    </div>
-    <div class="hud">
-        <div id="score">00</div>
-        <div id="timer">00.00s</div>
-    </div>
-    <div class="side-r">
-        <h3 style="color:#f00; font-size:0.7em;">TOP_RECORDS</h3>
-        <div id="leader
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;900&display=swap');
+body{background:#050505;color:#fff;font-family:'Orbitron',sans-serif;margin:0;display:grid;grid-template-columns:250px 1fr 300px;height:100vh;}
+.menu{background:#0a0a0a;border-right:2px solid #f00;padding:20px;}
+.btn{width:100%;background:#111;border:1px solid #444;color:#aaa;padding:15px;margin:5px 0;cursor:pointer;font-family:'Orbitron';}
+.btn.active{border-color:#f00;color:#f00;background:rgba(255,0,0,0.1);}
+#mainBtn{background:#900;color:#fff;border:none;font-weight:900;margin-top:20px;}
+.hud{display:flex;flex-direction:column;justify-content:center;align-items:center;}
+#score{font-size:12vw;color:#f00;text-shadow:0 0 20px #f00;line-height:1;}
+#timer{font-size:5vw;color:#666;}
+.side-r{background:#0a0a0a;border-left:2px solid #333;padding:20px;}
+.rec{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #22
