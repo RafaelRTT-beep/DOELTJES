@@ -4,8 +4,8 @@
 #include <esp_now.h>
 #include <ArduinoJson.h>
 
-const char* ssid = "STEALTH_TARGET_PRO";
-const char* password = "rtt";
+const char* ssid = "RTT TARGET PRO";
+const char* password = "waalhaven187";
 
 AsyncWebServer server(80);
 WebSocketsServer webSocket = WebSocketsServer(81);
