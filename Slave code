@@ -1,111 +1,52 @@
 #include <esp_now.h>
 #include <WiFi.h>
-#include <FastLED.h>
 
 // --- CONFIGURATIE ---
-#define TARGET_ID 1        // Verander dit naar 2, 3, etc. voor je andere doelen
-#define PIEZO_PIN 34       // De pin die we succesvol hebben getest
-#define LED_PIN 5          // Pin voor je LED-strip
-#define SPEAKER_PIN 13     // Pin voor je actieve speaker/buzzer
-#define NUM_LEDS 12        // Aantal LED's in je ring of strip
+const int TARGET_ID = 2; // VERANDER DIT NAAR 2 VOOR DE TWEEDE SLAVE
+const int PIEZO_PIN = 34; 
+const int LED_R = 25;     
+const int LED_G = 26;     
+const int LED_B = 27;     
 
-CRGB leds[NUM_LEDS];
-int threshold = 500;       
-unsigned long lastHit = 0;
-const int debounce = 250;  // Minimale tijd tussen twee schoten (kwart seconde)
+const int THRESHOLD = 1800; 
 
-// --- VUL HIER HET MAC ADRES VAN JE MASTER IN ---
-// Je vindt dit adres in de Serial Monitor van je Master ESP32
-uint8_t masterAddr[] = {0x28, 0x05, 0xA5, 0x07, 0x41, 0xFC};
+// DIT IS HET BELANGRIJKE MAC ADRES VAN JOUW MASTER
+uint8_t masterAddr[] = {0x28, 0x05, 0xA5, 0x07, 0x41, 0xFC}; 
 
-// Structuur voor data-overdracht (moet exact gelijk zijn aan de Master)
 typedef struct struct_message {
     int targetID;
-    float impactForce;
+    int command; 
 } struct_message;
 
 struct_message myData;
+struct_message incomingCmd;
 
-// Ontvangst van commando's van de Master (zoals gevoeligheid aanpassen)
-#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+bool isTargetActive = false;
+int currentTargetMode = 0; 
+
+void setLED(int r, int g, int b) {
+    analogWrite(LED_R, r);
+    analogWrite(LED_G, g);
+    analogWrite(LED_B, b);
+}
+
 void onDataRecv(const esp_now_recv_info *info, const uint8_t *incomingData, int len) {
-#else
-void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
-#endif
-    if (len == sizeof(int)) {
-        memcpy(&threshold, incomingData, sizeof(int));
-        Serial.print("Nieuwe threshold ontvangen: ");
-        Serial.println(threshold);
-    }
-}
-
-void setup() {
-    Serial.begin(115200);
+    memcpy(&incomingCmd, incomingData, sizeof(incomingCmd));
     
-    // WiFi in Station mode voor ESP-NOW
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
-
-    // Hardware instellingen
-    analogSetAttenuation(ADC_11db); // Vergroot het bereik van de piezo meting
-    pinMode(PIEZO_PIN, INPUT);
-    pinMode(SPEAKER_PIN, OUTPUT);
-
-    // LED initialisatie
-    FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
-    FastLED.setBrightness(255);
-    fill_solid(leds, NUM_LEDS, CRGB::Black);
-    FastLED.show();
-
-    // ESP-NOW initialisatie
-    if (esp_now_init() != ESP_OK) {
-        Serial.println("Error initializing ESP-NOW");
-        return;
-    }
-
-    // Master toevoegen als 'peer'
-    esp_now_peer_info_t peerInfo = {};
-    memcpy(peerInfo.peer_addr, masterAddr, 6);
-    peerInfo.channel = 0;  
-    peerInfo.encrypt = false;
-    
-    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-        Serial.println("Failed to add peer");
-        return;
-    }
-
-    esp_now_register_recv_cb(onDataRecv);
-    Serial.println("Slave Ready. Waiting for impact...");
-}
-
-void loop() {
-    int val = analogRead(PIEZO_PIN);
-
-    // Check of de inslag boven de drempelwaarde komt
-    if (val > threshold && (millis() - lastHit > debounce)) {
-        lastHit = millis();
+    if (incomingCmd.targetID == TARGET_ID || incomingCmd.targetID == 0) {
+        currentTargetMode = incomingCmd.command;
         
-        // Data versturen naar Master
-        myData.targetID = TARGET_ID;
-        myData.impactForce = (float)val;
-        
-        esp_err_t result = esp_now_send(masterAddr, (uint8_t *) &myData, sizeof(myData));
-        
-        // Lokale feedback: Geluid en Licht
-        digitalWrite(SPEAKER_PIN, HIGH);
-        fill_solid(leds, NUM_LEDS, CRGB::White); // Flits wit bij inslag
-        FastLED.show();
-
-        delay(80); // Duur van de flits en piep
-
-        digitalWrite(SPEAKER_PIN, LOW);
-        fill_solid(leds, NUM_LEDS, CRGB::Black);
-        FastLED.show();
-
-        if (result == ESP_OK) {
-            Serial.println("Hit verzonden naar Master!");
-        } else {
-            Serial.println("Fout bij verzenden naar Master");
+        if (currentTargetMode == 1) { // SHOOT (Groen/Wit)
+            setLED(0, 255, 0); 
+            isTargetActive = true;
+        } 
+        else if (currentTargetMode == 2) { // NO-SHOOT (Rood)
+            setLED(255, 0, 0);
+            isTargetActive = true;
+        } 
+        else { // UIT
+            setLED(0, 0, 0);
+            isTargetActive = false;
         }
     }
 }
